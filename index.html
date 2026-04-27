@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Person Detector</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+  <style>
+    :root {
+      --green: #00ff88;
+      --red: #ff3366;
+      --bg: #050a0e;
+      --panel: #0a1520;
+      --border: #0f2a40;
+      --text: #a0c8d8;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: 
+        radial-gradient(ellipse at 20% 20%, rgba(0,255,136,0.04) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 80%, rgba(0,150,255,0.04) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 780px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .title {
+      font-family: 'Orbitron', monospace;
+      font-size: clamp(1.4rem, 5vw, 2.2rem);
+      font-weight: 900;
+      color: var(--green);
+      text-shadow: 0 0 20px rgba(0,255,136,0.5), 0 0 40px rgba(0,255,136,0.2);
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    .subtitle {
+      font-size: 0.75rem;
+      color: #3a6a7a;
+      letter-spacing: 3px;
+      margin-top: 6px;
+    }
+
+    .scan-line {
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      margin: 16px 0;
+      opacity: 0.4;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #2a4a5a;
+      display: inline-block;
+      margin-right: 8px;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .status-dot.active {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 1.2s infinite;
+    }
+    .status-dot.loading {
+      background: #ffaa00;
+      box-shadow: 0 0 8px #ffaa00;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    #status-text { color: var(--text); }
+
+    .count-badge {
+      font-family: 'Orbitron', monospace;
+      font-size: 0.85rem;
+      color: var(--green);
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 0 30px rgba(0,255,136,0.05), inset 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    .corner {
+      position: absolute;
+      width: 18px; height: 18px;
+      border-color: var(--green);
+      border-style: solid;
+      opacity: 0.6;
+      z-index: 10;
+    }
+    .corner.tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+    .corner.tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+    .corner.bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+    .corner.br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+    #video {
+      width: 100%;
+      display: block;
+      transform: scaleX(-1);
+    }
+
+    #canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      transform: scaleX(-1);
+    }
+
+    .overlay-text {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Orbitron', monospace;
+      font-size: 0.65rem;
+      letter-spacing: 3px;
+      color: rgba(0,255,136,0.4);
+      z-index: 10;
+      white-space: nowrap;
+    }
+
+    .fps-counter {
+      position: absolute;
+      bottom: 10px;
+      right: 12px;
+      font-size: 0.65rem;
+      color: rgba(0,255,136,0.35);
+      z-index: 10;
+      letter-spacing: 1px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.8rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      border-color: var(--green);
+      color: var(--green);
+      box-shadow: 0 0 12px rgba(0,255,136,0.1);
+    }
+
+    button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    #btn-start {
+      border-color: rgba(0,255,136,0.4);
+      color: var(--green);
+    }
+
+    #btn-stop { border-color: rgba(255,51,102,0.3); color: var(--red); }
+    #btn-stop:hover { border-color: var(--red); box-shadow: 0 0 12px rgba(255,51,102,0.1); }
+
+    .log-panel {
+      margin-top: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 16px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-size: 0.68rem;
+      line-height: 1.8;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .log-entry { color: #3a6a7a; }
+    .log-entry.detected { color: var(--green); }
+    .log-entry.warn { color: #ffaa00; }
+    .log-entry span { color: #2a4a5a; margin-right: 8px; }
+
+    .alert-banner {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-family: 'Orbitron', monospace;
+      font-size: 0.8rem;
+      text-align: center;
+      letter-spacing: 2px;
+      animation: fadeIn 0.3s ease;
+    }
+    .alert-banner.detected {
+      display: block;
+      background: rgba(0,255,136,0.06);
+      border: 1px solid rgba(0,255,136,0.3);
+      color: var(--green);
+      text-shadow: 0 0 10px rgba(0,255,136,0.4);
+    }
+    .alert-banner.clear {
+      display: block;
+      background: rgba(255,51,102,0.06);
+      border: 1px solid rgba(255,51,102,0.3);
+      color: var(--red);
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+    footer {
+      margin-top: 24px;
+      text-align: center;
+      font-size: 0.62rem;
+      color: #1a3a4a;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="title">Person Detector</div>
+    <div class="subtitle">Real-time Computer Vision System · COCO-SSD · TensorFlow.js</div>
+    <div class="scan-line"></div>
+  </header>
+
+  <div class="status-bar">
+    <div>
+      <span class="status-dot" id="dot"></span>
+      <span id="status-text">INITIALIZING MODEL...</span>
+    </div>
+    <div class="count-badge" id="count-badge">PERSONS: 0</div>
+  </div>
+
+  <div class="video-wrapper">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="overlay-text">LIVE FEED · AI VISION ACTIVE</div>
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div class="fps-counter" id="fps">-- FPS</div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-start" disabled>▶ START CAMERA</button>
+    <button id="btn-stop" disabled>■ STOP</button>
+  </div>
+
+  <div class="alert-banner" id="alert"></div>
+
+  <div class="log-panel" id="log">
+    <div class="log-entry"><span>SYS</span> Booting TensorFlow.js runtime...</div>
+  </div>
+
+  <footer>FINAL PROJECT · AI &amp; PROMPT ENGINEERING · 2026</footer>
+</div>
+
+<script>
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('status-text');
+  const countBadge = document.getElementById('count-badge');
+  const alert = document.getElementById('alert');
+  const log = document.getElementById('log');
+  const fpsEl = document.getElementById('fps');
+  const btnStart = document.getElementById('btn-start');
+  const btnStop = document.getElementById('btn-stop');
+
+  let model = null;
+  let animId = null;
+  let running = false;
+  let lastTime = performance.now();
+  let frameCount = 0;
+  let lastPersonCount = -1;
+
+  function addLog(msg, type = '') {
+    const now = new Date();
+    const time = now.toTimeString().split(' ')[0];
+    const el = document.createElement('div');
+    el.className = 'log-entry ' + type;
+    el.innerHTML = `<span>${time}</span>${msg}`;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    if (log.children.length > 30) log.removeChild(log.firstChild);
+  }
+
+  async function loadModel() {
+    dot.className = 'status-dot loading';
+    statusText.textContent = 'LOADING AI MODEL...';
+    addLog('Loading COCO-SSD object detection model...', 'warn');
+    try {
+      model = await cocoSsd.load();
+      dot.className = 'status-dot';
+      statusText.textContent = 'MODEL READY · START CAMERA';
+      btnStart.disabled = false;
+      addLog('Model loaded successfully. Ready to detect.', 'detected');
+    } catch (e) {
+      addLog('Error loading model: ' + e.message, 'warn');
+    }
+  }
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 } } });
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      running = true;
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+      dot.className = 'status-dot active';
+      statusText.textContent = 'CAMERA ACTIVE · SCANNING...';
+      addLog('Camera stream started. Detection running.', 'detected');
+      detectLoop();
+    } catch (e) {
+      addLog('Camera error: ' + e.message, 'warn');
+      statusText.textContent = 'CAMERA ACCESS DENIED';
+    }
+  }
+
+  function stopCamera() {
+    running = false;
+    cancelAnimationFrame(animId);
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(t => t.stop());
+      video.srcObject = null;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    dot.className = 'status-dot';
+    statusText.textContent = 'STOPPED · PRESS START TO RESUME';
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    countBadge.textContent = 'PERSONS: 0';
+    alert.className = 'alert-banner';
+    addLog('Detection stopped.', '');
+    lastPersonCount = -1;
+  }
+
+  async function detectLoop() {
+    if (!running) return;
+
+    const now = performance.now();
+    frameCount++;
+    if (now - lastTime >= 1000) {
+      fpsEl.textContent = frameCount + ' FPS';
+      frameCount = 0;
+      lastTime = now;
+    }
+
+    try {
+      const predictions = await model.detect(video);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const persons = predictions.filter(p => p.class === 'person');
+
+      persons.forEach(p => {
+        const [x, y, w, h] = p.bbox;
+        const conf = Math.round(p.score * 100);
+
+        // Glow effect
+        ctx.shadowColor = '#00ff88';
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        ctx.shadowBlur = 0;
+
+        // Corner accents
+        const cs = 14;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([cx,cy]) => {
+          ctx.beginPath();
+          ctx.moveTo(cx + (cx===x?cs:-cs), cy);
+          ctx.lineTo(cx, cy);
+          ctx.lineTo(cx, cy + (cy===y?cs:-cs));
+          ctx.stroke();
+        });
+
+        // Label
+        ctx.fillStyle = 'rgba(0,255,136,0.85)';
+        ctx.fillRect(x, y - 22, w, 22);
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 12px "Share Tech Mono", monospace';
+        ctx.fillText(`PERSON  ${conf}%`, x + 6, y - 6);
+      });
+
+      if (persons.length !== lastPersonCount) {
+        lastPersonCount = persons.length;
+        countBadge.textContent = `PERSONS: ${persons.length}`;
+        if (persons.length > 0) {
+          alert.className = 'alert-banner detected';
+          alert.textContent = `▲ ${persons.length} PERSON${persons.length > 1 ? 'S' : ''} DETECTED`;
+          addLog(`Detected ${persons.length} person(s) in frame.`, 'detected');
+        } else {
+          alert.className = 'alert-banner clear';
+          alert.textContent = '✕ NO PERSONS IN FRAME';
+          addLog('Frame clear — no persons detected.', '');
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    animId = requestAnimationFrame(detectLoop);
+  }
+
+  btnStart.addEventListener('click', startCamera);
+  btnStop.addEventListener('click', stopCamera);
+
+  loadModel();
+</script>
+</body>
+</html>
